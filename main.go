@@ -1,10 +1,10 @@
 package main
 
-import "qbCopyProject/client"
+import "qbCopyProject/server"
 
 func main() {
-	//server.StartServer()
-	client.StartClient()
+	server.StartServer()
+	//client.StartClient()
 }
 
 //python3 /opt/script/qb/loading.py "%R" "%N"
