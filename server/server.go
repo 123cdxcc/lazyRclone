@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"container/list"
 	"encoding/json"
 	"flag"
 	"log"
@@ -14,6 +15,7 @@ import (
 )
 
 var queue = make(chan entity.RcloneCopyConfig)
+var arr = list.New()
 
 func parseArgs() (string, string, string) {
 	addr := flag.String("addr", ":1564", "服务端启动地址和端口")
@@ -21,6 +23,20 @@ func parseArgs() (string, string, string) {
 	token := flag.String("token", "", "任务完成通知pushPlus token")
 	flag.Parse()
 	return *addr, *email, *token
+}
+
+func getArrConfig(obj entity.RcloneCopyConfig) *list.Element {
+	for i := arr.Front(); i != nil; i = i.Next() {
+		t := i.Value.(entity.RcloneCopyConfig)
+		if obj.RemoteName == t.RemoteName &&
+			obj.RemoteFilePath == t.RemoteFilePath &&
+			obj.LogFilePath == t.LogFilePath &&
+			obj.UploadingFilePath == t.UploadingFilePath &&
+			obj.ThreadCount == t.ThreadCount {
+			return i
+		}
+	}
+	return nil
 }
 
 func uploading(email, token string) {
@@ -41,6 +57,10 @@ func uploading(email, token string) {
 				notify.SendPush(token, "lazyQB任务失败通知", "任务"+config.UploadingFilePath+"传输失败")
 			}
 			continue
+		}
+		element := getArrConfig(config)
+		if element != nil {
+			arr.Remove(element)
 		}
 		log.Printf("执行完毕，任务文件->%s", config.UploadingFilePath)
 		if email != "" {
@@ -74,13 +94,13 @@ func processed(conn net.Conn) {
 		}
 		sb.Write(bf[:n])
 	}
-	//log.Printf("%v\n", sb.String())
 	var rcc entity.RcloneCopyConfig
 	err := json.Unmarshal([]byte(sb.String()), &rcc)
 	if err != nil {
 		log.Printf("反序列化失败,原因->%v\n", err)
 		return
 	}
+	arr.PushBack(rcc)
 	queue <- rcc
 	log.Println("任务提交成功")
 }
@@ -99,8 +119,7 @@ func server(addr string) {
 			log.Println(err)
 			continue
 		}
-		log.Println("收到连接")
-		processed(conn)
+		go processed(conn)
 	}
 }
 
