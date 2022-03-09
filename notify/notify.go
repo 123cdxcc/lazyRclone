@@ -6,9 +6,13 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"qbCopyProject/db"
 	"qbCopyProject/entity"
 	"strings"
 )
+
+const PUSH = "push"
+const EMAIL = "email"
 
 func SendMail(email, title, text string) bool {
 	client := &http.Client{}
@@ -69,4 +73,13 @@ func SendPush(token, title, text string) bool {
 		return true
 	}
 	return false
+}
+
+func SendNotify(title, text string) {
+	if db.Email != "" {
+		SendMail(db.Email, title, text)
+	}
+	if db.Push != "" {
+		SendPush(db.Push, title, text)
+	}
 }

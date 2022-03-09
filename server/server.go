@@ -5,8 +5,10 @@ import (
 	"container/list"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net"
+	"qbCopyProject/db"
 	"qbCopyProject/entity"
 	"qbCopyProject/notify"
 	"qbCopyProject/rclone"
@@ -14,8 +16,8 @@ import (
 	"strings"
 )
 
-var queue = make(chan entity.RcloneCopyConfig)
-var arr = list.New()
+var taskQueue = make(chan entity.RcloneCopyConfig, 14)
+var tasks = &db.UploadingTasks
 
 func parseArgs() (string, string, string) {
 	addr := flag.String("addr", ":1564", "服务端启动地址和端口")
@@ -26,7 +28,7 @@ func parseArgs() (string, string, string) {
 }
 
 func getArrConfig(obj entity.RcloneCopyConfig) *list.Element {
-	for i := arr.Front(); i != nil; i = i.Next() {
+	for i := (*tasks).Front(); i != nil; i = i.Next() {
 		t := i.Value.(entity.RcloneCopyConfig)
 		if obj.RemoteName == t.RemoteName &&
 			obj.RemoteFilePath == t.RemoteFilePath &&
@@ -39,36 +41,38 @@ func getArrConfig(obj entity.RcloneCopyConfig) *list.Element {
 	return nil
 }
 
-func uploading(email, token string) {
+func uploading() {
 	for {
-		config := <-queue
-		log.Printf("上传队列收到任务，任务执行中->%s", config.UploadingFilePath)
+		config := <-taskQueue
+		log.Printf("当前任务->%s\r\n", config.UploadingFilePath)
 		err := rclone.Uploading(
 			config.RemoteName,
 			strconv.Itoa(config.ThreadCount),
 			config.LogFilePath, config.UploadingFilePath,
 			config.RemoteFilePath)
 		if err != nil {
-			log.Printf("任务执行错误->%v\n", err)
-			if email != "" {
-				notify.SendMail(email, "lazyQB任务失败通知", "任务"+config.UploadingFilePath+"传输失败")
-			}
-			if token != "" {
-				notify.SendPush(token, "lazyQB任务失败通知", "任务"+config.UploadingFilePath+"传输失败")
-			}
+			log.Printf("任务错误->%v\n", err)
+			notify.SendNotify("lazyQB任务失败通知", "任务"+config.UploadingFilePath+"传输失败")
 			continue
 		}
 		element := getArrConfig(config)
 		if element != nil {
-			arr.Remove(element)
+			(*tasks).Remove(element)
 		}
-		log.Printf("执行完毕，任务文件->%s", config.UploadingFilePath)
-		if email != "" {
-			notify.SendMail(email, "lazyQB任务完成通知", "任务"+config.UploadingFilePath+"传输完成")
+		log.Printf("任务结束->%s\r\n", config.UploadingFilePath)
+		sb := strings.Builder{}
+		sb.WriteString(fmt.Sprintf("队列剩余任务数量:%d,任务列表[", (*tasks).Len()))
+		for i := (*tasks).Front(); i != nil; i = i.Next() {
+			sb.WriteString(fmt.Sprintf("%s,", i.Value.(entity.RcloneCopyConfig).UploadingFilePath))
 		}
-		if token != "" {
-			notify.SendPush(token, "lazyQB任务完成通知", "任务"+config.UploadingFilePath+"传输完成")
+		sb.WriteString("]")
+		log.Println(sb.String())
+		if (*tasks).Len() > 0 {
+			log.Printf("下一个任务:%s\r\n", (*tasks).Front().Value.(entity.RcloneCopyConfig).UploadingFilePath)
+		} else {
+			log.Println("当前没有任务")
 		}
+		notify.SendNotify("lazyQB任务完成通知", "任务"+config.UploadingFilePath+"传输完成")
 	}
 }
 
@@ -79,7 +83,7 @@ func processed(conn net.Conn) {
 
 		}
 	}(conn)
-	log.Println("开始提交任务")
+	log.Println("收到任务")
 	var sb strings.Builder
 	reader := bufio.NewReader(conn)
 	var bf [12]byte
@@ -100,9 +104,9 @@ func processed(conn net.Conn) {
 		log.Printf("反序列化失败,原因->%v\n", err)
 		return
 	}
-	arr.PushBack(rcc)
-	queue <- rcc
-	log.Println("任务提交成功")
+	(*tasks).PushBack(rcc)
+	taskQueue <- rcc
+	log.Println("提交成功")
 }
 
 func server(addr string) {
@@ -112,7 +116,6 @@ func server(addr string) {
 		return
 	}
 	log.Println("服务端启动完成")
-	log.Println("开始等待任务")
 	for {
 		conn, err := listen.Accept()
 		if err != nil {
@@ -125,8 +128,10 @@ func server(addr string) {
 
 func StartServer() {
 	addr, email, token := parseArgs()
+	db.Email = email
+	db.Push = token
 	log.Println("启动任务队列")
-	go uploading(email, token)
+	go uploading()
 	log.Println("启动服务端")
 	server(addr)
 }
