@@ -53,7 +53,8 @@ func uploading() {
 		if err != nil {
 			log.Printf("任务错误->%v\n", err)
 			notify.SendNotify("lazyQB任务失败通知", "任务"+config.UploadingFilePath+"传输失败")
-			continue
+		} else {
+			notify.SendNotify("lazyQB任务完成通知", "任务"+config.UploadingFilePath+"传输完成")
 		}
 		element := getArrConfig(config)
 		if element != nil {
@@ -72,7 +73,7 @@ func uploading() {
 		} else {
 			log.Println("当前没有任务")
 		}
-		notify.SendNotify("lazyQB任务完成通知", "任务"+config.UploadingFilePath+"传输完成")
+		fmt.Println()
 	}
 }
 
