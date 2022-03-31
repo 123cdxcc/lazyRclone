@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-var taskQueue = make(chan entity.RcloneCopyConfig, 14)
+var taskQueue = &db.TaskQueue
 var tasks = &db.UploadingTasks
 
 func parseArgs() (string, string, string) {
@@ -43,24 +43,25 @@ func getArrConfig(obj entity.RcloneCopyConfig) *list.Element {
 
 func uploading() {
 	for {
-		config := <-taskQueue
-		log.Printf("当前任务->%s\r\n", config.UploadingFilePath)
+		config := <-*taskQueue
+		//go notify.Message()
 		err := rclone.Uploading(
 			config.RemoteName,
 			strconv.Itoa(config.ThreadCount),
 			config.LogFilePath, config.UploadingFilePath,
 			config.RemoteFilePath)
 		if err != nil {
-			log.Printf("任务错误->%v\n", err)
-			notify.SendNotify("lazyQB任务失败通知", "任务"+config.UploadingFilePath+"传输失败")
+			db.ErrorTasks.PushBack(fmt.Sprintf("任务%v上传错误,原因->%v", config.UploadingFilePath, err))
+			go notify.SendNotify("lazyQB任务失败通知", "任务"+config.UploadingFilePath+"传输失败")
 		} else {
-			notify.SendNotify("lazyQB任务完成通知", "任务"+config.UploadingFilePath+"传输完成")
+			go notify.SendNotify("lazyQB任务完成通知", "任务"+config.UploadingFilePath+"传输完成")
 		}
 		element := getArrConfig(config)
 		if element != nil {
 			(*tasks).Remove(element)
 		}
-		log.Printf("任务结束->%s\r\n", config.UploadingFilePath)
+		go notify.Message()
+		/*log.Printf("任务结束->%s\r\n", config.UploadingFilePath)
 		sb := strings.Builder{}
 		sb.WriteString(fmt.Sprintf("队列剩余任务数量:%d,任务列表[", (*tasks).Len()))
 		for i := (*tasks).Front(); i != nil; i = i.Next() {
@@ -73,7 +74,7 @@ func uploading() {
 		} else {
 			log.Println("当前没有任务")
 		}
-		fmt.Println()
+		fmt.Println()*/
 	}
 }
 
@@ -84,7 +85,7 @@ func processed(conn net.Conn) {
 
 		}
 	}(conn)
-	log.Println("收到任务")
+	//log.Println("收到任务")
 	var sb strings.Builder
 	reader := bufio.NewReader(conn)
 	var bf [12]byte
@@ -94,7 +95,8 @@ func processed(conn net.Conn) {
 			break
 		}
 		if err != nil {
-			log.Printf("获取任务错误->%v\n", err)
+			//log.Printf("获取任务错误->%v\n", err)
+			db.ErrorTasks.PushBack(fmt.Sprintf("任务接收错误,原因->%v", err))
 			break
 		}
 		sb.Write(bf[:n])
@@ -102,12 +104,14 @@ func processed(conn net.Conn) {
 	var rcc entity.RcloneCopyConfig
 	err := json.Unmarshal([]byte(sb.String()), &rcc)
 	if err != nil {
-		log.Printf("反序列化失败,原因->%v\n", err)
+		//log.Printf("反序列化失败,原因->%v\n", err)
+		db.ErrorTasks.PushBack(fmt.Sprintf("反序列化失败,原因->%v", err))
 		return
 	}
 	(*tasks).PushBack(rcc)
-	taskQueue <- rcc
-	log.Println("提交成功")
+	*taskQueue <- rcc
+	//log.Println("提交成功")
+	go notify.Message()
 }
 
 func server(addr string) {
